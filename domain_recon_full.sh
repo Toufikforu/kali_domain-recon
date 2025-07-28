@@ -1,35 +1,37 @@
 #!/bin/bash
 
-# Usage Check
+# Usage check
 if [ -z "$1" ]; then
-    echo "Usage: ./domain_recon_full.sh example.com"
+    echo "Usage: ./domain_recon_clean.sh example.com"
     exit 1
 fi
 
 DOMAIN=$1
-OUTPUT_DIR="recon_$DOMAIN"
+OUTPUT_DIR="clean_recon_$DOMAIN"
 mkdir -p $OUTPUT_DIR
 
-echo "[+] Starting full recon on $DOMAIN"
-echo "[*] Saving output in $OUTPUT_DIR"
+echo "[+] Starting CLEAN recon on $DOMAIN"
+echo "[*] Output will be saved in $OUTPUT_DIR"
 
-# WHOIS
-echo "[+] WHOIS Lookup..."
-whois $DOMAIN > $OUTPUT_DIR/whois.txt
+############################
+### WHOIS (Trimmed Info) ###
+############################
+echo "[+] Getting domain WHOIS..."
+whois $DOMAIN | grep -Ei 'Domain Name|Registrar:|Creation Date|Expiry Date|Name Server|Updated Date|Registrar Abuse Contact Email|Registrant Organization|Registrant Country' \
+> $OUTPUT_DIR/domain_info.txt
 
-# DIG
-echo "[+] DNS Records with dig..."
-dig $DOMAIN ANY +noall +answer > $OUTPUT_DIR/dns_any.txt
+######################
+### DNS RECORDS ###
+######################
+echo "[+] Collecting DNS Records..."
 dig NS $DOMAIN +short > $OUTPUT_DIR/ns.txt
 dig MX $DOMAIN +short > $OUTPUT_DIR/mx.txt
 dig TXT $DOMAIN +short > $OUTPUT_DIR/txt.txt
 
-# DNSRecon
-echo "[+] Running dnsrecon..."
-dnsrecon -d $DOMAIN -a > $OUTPUT_DIR/dnsrecon.txt
-
-# Sublist3r
-echo "[+] Running Sublist3r..."
+######################
+### Sublist3r ###
+######################
+echo "[+] Finding subdomains with Sublist3r..."
 if [ ! -d "$HOME/tools/Sublist3r" ]; then
     echo "[!] Sublist3r not found. Cloning..."
     git clone https://github.com/aboul3la/Sublist3r.git ~/tools/Sublist3r
@@ -37,27 +39,27 @@ if [ ! -d "$HOME/tools/Sublist3r" ]; then
 fi
 python3 ~/tools/Sublist3r/sublist3r.py -d $DOMAIN -o $OUTPUT_DIR/subdomains.txt
 
-# Loop through subdomains
+################################
+### Loop Through Subdomains ###
+################################
+echo "[+] Scanning discovered subdomains..."
+
 while read sub; do
     if [[ ! -z "$sub" ]]; then
-        echo -e "\n[***] Scanning $sub ..."
+        echo "[*] Scanning $sub..."
 
-        # Nmap
-        echo "[+] Nmap scan (top ports)..."
-        nmap -sV --top-ports 1000 -T4 $sub -oN $OUTPUT_DIR/nmap_$sub.txt
+        # Nmap (open ports summary)
+        nmap -sV --top-ports 1000 -T4 $sub | grep -E "open|PORT|Service" > $OUTPUT_DIR/open_ports_$sub.txt
 
-        # WhatWeb
-        echo "[+] Running WhatWeb..."
-        whatweb --log-verbose=$OUTPUT_DIR/whatweb_$sub.txt $sub
+        # WhatWeb (fingerprint web tech only)
+        whatweb --log-brief=$OUTPUT_DIR/tech_$sub.txt $sub
 
-        # Nikto
-        echo "[+] Running Nikto..."
-        nikto -host $sub -o $OUTPUT_DIR/nikto_$sub.txt
+        # Nikto (only high priority findings)
+        nikto -host $sub | grep -Ei "OSVDB|Server|X-Frame|X-XSS|X-Content|Cookies|insecure|error|admin|dir listing" > $OUTPUT_DIR/nikto_$sub.txt
 
-        # Nuclei (make sure nuclei is installed)
-        echo "[+] Running Nuclei..."
-        nuclei -u $sub -o $OUTPUT_DIR/nuclei_$sub.txt || echo "Nuclei not installed or errored."
+        # Nuclei (filtering output)
+        nuclei -u $sub -severity high,critical -o $OUTPUT_DIR/nuclei_$sub.txt || echo "Nuclei not installed or errored."
     fi
 done < $OUTPUT_DIR/subdomains.txt
 
-echo "[✔] Recon complete. All results saved in: $OUTPUT_DIR"
+echo "[✔] Clean recon complete. Results in: $OUTPUT_DIR"
